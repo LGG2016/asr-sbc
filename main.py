@@ -107,29 +107,37 @@ class AsrGenerator(threading.Thread):
         data["metaObject"] = {}
         data["metaObject"]["fileId"] = id
         retry=0
-        while retry < 30:
+        while retry < 20:
             time.sleep(1)
-            response = requests.post(url=url, headers=headers, data=json.dumps(data))
-            if response.status_code == 200:
-                #print(response.text)
-                info = response.json()
-                if info["code"] == 200:
-                    info_status = info["data"]["status"]
-                    if info_status == "TRANSFERING":
-                        logger.debug("status is transfering, continue ...")
-                        continue
-                    elif info_status == "SUCCEED":
-                        result = info["data"]["result"][0]["text"]
-                        break
+            try:
+                response = requests.post(url=url, headers=headers, data=json.dumps(data))
+            except:
+                logger.error("get result exception ...")
+                continue
+            else:
+                if response.status_code == 200:
+                    #print(response.text)
+                    info = response.json()
+                    if info["code"] == 200:
+                        info_status = info["data"]["status"]
+                        if info_status == "TRANSFERING":
+                            logger.debug("status is transfering, continue ...")
+                            continue
+                        elif info_status == "SUCCEED":
+                            result = ""
+                            for part in info["data"]["result"]:
+                                result += part["text"]
+                            break
+                        else:
+                            logger.error("get result failed, status: %s" % info_status)
+                            break
                     else:
-                        logger.error("get result failed, status: %s" % info_status)
+                        logger.error("get result failed, code: %d" % info["code"])
                         break
                 else:
-                    logger.error("get result failed, code: %d" % info["code"])
+                    logger.error("get result failed, response code: %d, text: %s,", response.status_code, response.text)
                     break
-            else:
-                logger.error("get result failed, response code: %d, text: %s,", response.status_code, response.text)
-                break
+
         return result
 
 
@@ -143,7 +151,8 @@ class AsrGenerator(threading.Thread):
         param["metaObject"] = {}
         param["metaObject"]["recordId"] = self.wav_file
         param["metaObject"]["priority"] = 100
-        param["metaObject"]["speechSeparate"] = True
+        #param["metaObject"]["speechSeparate"] = True
+        #param["metaObject"]["speakerNumber"] = 1
         encoder = MultipartEncoder(
             fields={
                 'param': json.dumps(param, sort_keys=True, indent=4, separators=(',', ': ')),
@@ -158,16 +167,25 @@ class AsrGenerator(threading.Thread):
         }
         logger.info("recognition [%s] ..." % self.wav_file)
         print("recognition [%s] ..." % self.wav_file)
-        response = requests.post(url=url, headers=headers, data=encoder)
-        if response.status_code == 200:
-            result = response.json()
-            if result["code"] == 200:
-                fileId = result["data"]["fileId"]
-                return self.getResult(fileId)
+        retry = 0
+        while retry < 3:
+            retry += 1
+            try:
+                response = requests.post(url=url, headers=headers, data=encoder)
+            except:
+                logger.error("upload [%s] file exception" % (self.wav_file))
+                time.sleep(1)
+                continue
             else:
-                logger.error("upload failed, result code: %d" % result["code"])
-        else:
-            logger.error("upload failed, response code: %d" % response.status_code)
+                if response.status_code == 200:
+                    result = response.json()
+                    if result["code"] == 200:
+                        fileId = result["data"]["fileId"]
+                        return self.getResult(fileId)
+                    else:
+                        logger.error("upload [%s] failed, result code: %d, msg: %s, status: %s" % (self.wav_file, result["code"], result["msg"], result["data"]["status"]))
+                else:
+                    logger.error("upload [%s] failed, response code: %d" % (self.wav_file, response.status_code))
 
         return ""
 
@@ -203,7 +221,7 @@ if __name__ == "__main__":
             index+=1
     for t in threadlist:
         t.start()
-        time.sleep(1)
+        time.sleep(4)
     for t in threadlist:
         t.join()
     logger.info("main over")
